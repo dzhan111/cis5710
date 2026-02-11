@@ -28,7 +28,25 @@ module RegFile (
   localparam int NumRegs = 32;
   logic [`REG_SIZE] regs[NumRegs];
 
-  // TODO: your code here
+  //read from register numbers
+  always_comb begin
+    rs1_data = regs[rs1];
+    rs2_data = regs[rs2];
+  end
+
+  //write
+  always_ff @(posedge clk) begin
+  //if reset, clear all registers first
+    if (rst) begin 
+      for (int i = 0; i < NumRegs; i++ ) begin
+        regs[i] <= 32'b0;
+      end
+
+    //else: check we and no writing to register 0
+    end else if(we && (rd != 5'd0)) begin 
+      regs[rd] <= rd_data;
+    end
+  end
 
 endmodule
 
@@ -201,26 +219,138 @@ module DatapathSingleCycle (
   // TODO: you will need to edit the port connections, however.
   wire [`REG_SIZE] rs1_data;
   wire [`REG_SIZE] rs2_data;
+
+  logic rf_we;
+  logic [`REG_SIZE] rd_data;
+  
   RegFile rf (
     .clk(clk),
     .rst(rst),
-    .we(1'b0),
-    .rd(0),
-    .rd_data(0),
-    .rs1(0),
-    .rs2(0),
+    .we(rf_we),
+    .rd(insn_rd),
+    .rd_data(rd_data),
+    .rs1(insn_rs1),
+    .rs2(insn_rs2),
     .rs1_data(rs1_data),
     .rs2_data(rs2_data));
 
   logic illegal_insn;
 
+
+  //CARRY LOOKAHEAD Module
+  logic [31:0] cla_a;
+  logic [31:0] cla_b;
+  logic        cla_cin;
+  logic [31:0] cla_sum;
+
+  CarryLookaheadAdder cla (
+      .a(cla_a),
+      .b(cla_b),
+      .cin(cla_cin),
+      .sum(cla_sum)
+  );
+
+
+
   always_comb begin
+    //defaults
     illegal_insn = 1'b0;
+    cla_a = 32'd0;
+    cla_b = 32'd0;
+    cla_cin = 1'b0;
+    rf_we = 1'b0;
+    rd_data = 32'b0;
+
 
     case (insn_opcode)
+      // opcode7'h37
       OpLui: begin
-        // TODO: start here by implementing lui
+        // lui 
+        rf_we = 1'b1;
+        rd_data = {insn_from_imem[31:12], 12'b0};
       end
+      //opcode 13
+      OpRegImm: begin
+        rf_we = 1'b1;
+        if (insn_addi) begin
+          //use cla
+          cla_a   = rs1_data;
+          cla_b   = imm_i_sext;
+          cla_cin = 1'b0;
+          rf_we   = 1'b1;
+          rf_wdata = cla_sum;
+        end else if (insn_slti) begin
+          rd_data = ($signed(rs1_data) < $signed(imm_i_sext)) ? 32'b1 : 32'b0;
+        end else if (insn_sltiu) begin
+          rd_data = (rs1_data < imm_i_sext) ? 32'b1 : 32'b0;
+        end else if (insn_xori) begin
+          rd_data = (rs1_data ^ imm_i_sext)
+        end else if (insn_ori) begin
+          rd_data = (rs1_data | imm_i_sext)
+        end else if (insn_andi) begin
+          rd_data = (rs1_data & imm_i_sext)
+        end else if (insn_slli) begin
+          rd_data = (rs1_data << imm_i_sext[4:0])
+        end else if (insn_srli) begin
+          rd_data = (rs1_data >> imm_i_sext[4:0])
+        end else if (insn_srai) begin
+          rd_data = (rs1_data >>> imm_i_sext[4:0])
+        end else begin
+          we = 1'b0;
+          illegal_insn = 1'b1;
+        end
+        
+      end
+      //opcode 33
+      OpRegReg: begin
+        we = 1'b1;
+        if (insn_add) begin 
+          cla_a   = rs1_data;
+          cla_b   = rs2_data;
+          cla_cin = 1'b0;
+
+          rf_we   = 1'b1;
+          rf_wdata = cla_sum;
+        end else if (insn_sub) begin 
+          cla_a   = rs1_data;
+          cla_b   = ~rs2_data;
+          cla_cin = 1'b1;
+
+          rf_we   = 1'b1;
+          rf_wdata = cla_sum;
+
+        end else if (insn_sll) begin 
+
+        end else if (insn_slt) begin 
+
+        end else if (insn_sltu) begin 
+
+        end else if (insn_xor) begin 
+
+        end else if (insn_srl) begin 
+
+        end else if (insn_sra) begin 
+
+        end else if (insn_or) begin 
+
+        end else if (insn_and) begin 
+
+        end else begin 
+          illegal_insn = 1'b1;
+        end
+      end 
+      //opcode 63
+      OpBranch: begin
+
+      end
+      //opcode 73
+      OpEnviron: begin
+
+      end
+
+
+
+
       default: begin
         illegal_insn = 1'b1;
       end
