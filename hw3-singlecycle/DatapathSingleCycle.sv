@@ -43,7 +43,7 @@ module RegFile (
       end
 
     //else: check we and no writing to register 0
-    end else if(we && (rd != 5'd0)) begin 
+    end else if(we && (rd  != 5'd0)) begin 
       regs[rd] <= rd_data;
     end
   end
@@ -250,24 +250,42 @@ module DatapathSingleCycle (
       .sum(cla_sum)
   );
 
-
+  logic take; 
 
   always_comb begin
-    //defaults
+    // defaults
     illegal_insn = 1'b0;
+    halt = 1'b0;
+
     cla_a = 32'd0;
     cla_b = 32'd0;
     cla_cin = 1'b0;
+
     rf_we = 1'b0;
-    rd_data = 32'b0;
+    rd_data = 32'd0;
+
+    pcNext = pcCurrent + 32'd4;
+
+    addr_to_dmem = 32'd0;
+    store_data_to_dmem = 32'd0;
+    store_we_to_dmem = 4'b0000;
+    take = 1'b0;
+    trace_completed_pc = pcCurrent;
+    trace_completed_insn = insn_from_imem;
+    trace_completed_cycle_status = CYCLE_NO_STALL;
 
 
     case (insn_opcode)
       // opcode7'h37
       OpLui: begin
         // lui 
-        rf_we = 1'b1;
-        rd_data = {insn_from_imem[31:12], 12'b0};
+        if (insn_lui) begin
+          rf_we = 1'b1;
+          rd_data = {insn_from_imem[31:12], 12'b0};
+        end else begin
+          illegal_insn = 1'b1;
+          rf_we = 1'b0;
+        end
       end
       //opcode 13
       OpRegImm: begin
@@ -278,78 +296,104 @@ module DatapathSingleCycle (
           cla_b   = imm_i_sext;
           cla_cin = 1'b0;
           rf_we   = 1'b1;
-          rf_wdata = cla_sum;
+          rd_data = cla_sum;
         end else if (insn_slti) begin
           rd_data = ($signed(rs1_data) < $signed(imm_i_sext)) ? 32'b1 : 32'b0;
         end else if (insn_sltiu) begin
           rd_data = (rs1_data < imm_i_sext) ? 32'b1 : 32'b0;
         end else if (insn_xori) begin
-          rd_data = (rs1_data ^ imm_i_sext)
+          rd_data = (rs1_data ^ imm_i_sext);
         end else if (insn_ori) begin
-          rd_data = (rs1_data | imm_i_sext)
+          rd_data = (rs1_data | imm_i_sext);
         end else if (insn_andi) begin
-          rd_data = (rs1_data & imm_i_sext)
+          rd_data = (rs1_data & imm_i_sext);
         end else if (insn_slli) begin
-          rd_data = (rs1_data << imm_i_sext[4:0])
+          rd_data = (rs1_data << imm_shamt);
         end else if (insn_srli) begin
-          rd_data = (rs1_data >> imm_i_sext[4:0])
+          rd_data = (rs1_data >> imm_shamt);
         end else if (insn_srai) begin
-          rd_data = (rs1_data >>> imm_i_sext[4:0])
+          rd_data = ($signed(rs1_data) >>> imm_shamt);
         end else begin
-          we = 1'b0;
+          rf_we = 1'b0;
           illegal_insn = 1'b1;
         end
         
       end
       //opcode 33
       OpRegReg: begin
-        we = 1'b1;
+        rf_we = 1'b1;
         if (insn_add) begin 
           cla_a   = rs1_data;
           cla_b   = rs2_data;
           cla_cin = 1'b0;
 
-          rf_we   = 1'b1;
-          rf_wdata = cla_sum;
+          rd_data = cla_sum;
         end else if (insn_sub) begin 
           cla_a   = rs1_data;
           cla_b   = ~rs2_data;
           cla_cin = 1'b1;
 
-          rf_we   = 1'b1;
-          rf_wdata = cla_sum;
+          rd_data = cla_sum;
 
         end else if (insn_sll) begin 
-
+          rd_data = rs1_data << rs2_data[4:0];
         end else if (insn_slt) begin 
-
+          rd_data = ($signed(rs1_data) < $signed(rs2_data)) ? 32'b1 : 32'b0;
         end else if (insn_sltu) begin 
-
+          rd_data = ((rs1_data) < (rs2_data)) ? 32'b1 : 32'b0;
         end else if (insn_xor) begin 
-
+          rd_data = rs1_data ^ rs2_data;
         end else if (insn_srl) begin 
-
+          rd_data = rs1_data >> rs2_data[4:0];
         end else if (insn_sra) begin 
-
+          rd_data = $signed(rs1_data) >>> rs2_data[4:0];
         end else if (insn_or) begin 
-
+          rd_data = rs1_data | rs2_data;
         end else if (insn_and) begin 
-
+          rd_data = rs1_data & rs2_data;
         end else begin 
           illegal_insn = 1'b1;
+          rf_we = 1'b0;
         end
       end 
       //opcode 63
       OpBranch: begin
+        
+        rf_we = 1'b0; //no write       
+        store_we_to_dmem = 4'b0000; //no store
+
+        //boolean =  this branh be taken
+        take = 1'b0;
+        
+        if (insn_beq) begin
+          take = (rs1_data == rs2_data);
+        end else if (insn_bne) begin
+          take = (rs1_data != rs2_data);
+        end else if (insn_blt) begin
+          take = ($signed(rs1_data) < $signed(rs2_data));
+        end else if (insn_bge) begin
+          take = ($signed(rs1_data) >= $signed(rs2_data));
+        end else if (insn_bltu) begin
+          take = ((rs1_data) < (rs2_data));
+        end else if (insn_bgeu) begin
+          take = ((rs1_data) >= (rs2_data));
+        end else begin 
+          illegal_insn = 1'b1;
+        end
+
+        if (!illegal_insn && take) begin
+          pcNext = pcCurrent + imm_b_sext;
+        end
 
       end
       //opcode 73
       OpEnviron: begin
-
+        if (insn_ecall) begin
+          halt = 1'b1;
+        end else begin
+          illegal_insn = 1'b1;
+        end
       end
-
-
-
 
       default: begin
         illegal_insn = 1'b1;
