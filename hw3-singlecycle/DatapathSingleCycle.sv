@@ -250,7 +250,52 @@ module DatapathSingleCycle (
       .sum(cla_sum)
   );
 
-  logic take; 
+
+  //LOGIC DECLARATIONS before always comb
+  logic take;  //addition i think
+  logic negate_rem; //div
+  logic negate_quot; //div
+
+  //for multiplication + div
+  logic signed [31:0] s_rs1, s_rs2;
+  logic        [31:0] u_rs1, u_rs2;
+
+  logic signed [63:0] prod_ss;   // signed * signed
+  logic signed [63:0] prod_su;   // signed * unsigned
+  logic        [63:0] prod_uu;   // unsigned * unsigned
+
+
+
+  //DIVIDER - signed
+  wire [31:0] rs1_abs;
+  wire [31:0] rs2_abs;
+
+  assign rs1_abs = rs1_data[31] ? (~rs1_data + 1) : rs1_data;
+  assign rs2_abs = rs2_data[31] ? (~rs2_data + 1) : rs2_data;
+
+  wire [31:0] divs_quotient_unsigned;
+  wire [31:0] divs_remainder_unsigned;
+
+  DividerUnsigned u_divs (
+      .i_dividend (rs1_abs),
+      .i_divisor  (rs2_abs),
+      .o_remainder(divs_remainder_unsigned),
+      .o_quotient (divs_quotient_unsigned)
+  );
+
+  //DIVIDER UNSIGNED
+  wire [31:0] divu_quotient;
+  wire [31:0] divu_remainder;
+
+  DividerUnsigned u_divu (
+      .i_dividend (rs1_data),
+      .i_divisor  (rs2_data),
+      .o_remainder(divu_remainder),
+      .o_quotient (divu_quotient)
+  );
+
+  
+
 
   always_comb begin
     // defaults
@@ -273,6 +318,23 @@ module DatapathSingleCycle (
     trace_completed_pc = pcCurrent;
     trace_completed_insn = insn_from_imem;
     trace_completed_cycle_status = CYCLE_NO_STALL;
+
+
+    
+    //mult
+    s_rs1   = $signed(rs1_data);
+    s_rs2   = $signed(rs2_data);
+    u_rs1   = rs1_data;
+    u_rs2   = rs2_data;
+
+    prod_ss = $signed(rs1_data) * $signed(rs2_data);
+    prod_su = $signed(rs1_data) * $signed({1'b0, rs2_data}); // rs2 treated as unsigned
+    prod_uu = rs1_data * rs2_data;
+
+    //div
+    negate_quot = 1'b0;
+    negate_rem = 1'b0;
+
 
 
     case (insn_opcode)
@@ -322,6 +384,8 @@ module DatapathSingleCycle (
       //opcode 33
       OpRegReg: begin
         rf_we = 1'b1;
+
+        //adding and logic 
         if (insn_add) begin 
           cla_a   = rs1_data;
           cla_b   = rs2_data;
@@ -351,11 +415,57 @@ module DatapathSingleCycle (
           rd_data = rs1_data | rs2_data;
         end else if (insn_and) begin 
           rd_data = rs1_data & rs2_data;
-        end else begin 
+        end
+        //multiplication
+       else if (insn_mul) begin
+          rd_data = (u_rs1 * u_rs2);               // low 32 bits
+        end else if (insn_mulh) begin
+          rd_data = prod_ss[63:32];                // high 32 bits (signed*signed)
+        end else if (insn_mulhsu) begin
+          rd_data = prod_su[63:32];                // high 32 bits (signed*unsigned)
+        end else if (insn_mulhu) begin
+          rd_data = prod_uu[63:32];                // high 32 bits (unsigned*unsigned)
+        end else if (insn_div) begin
+          if (rs2_data == 32'b0) begin
+            rd_data = 32'hFFFF_FFFF;
+          end else if (rs1_data == 32'h8000_0000 && rs2_data == 32'hFFFF_FFFF) begin
+            rd_data = 32'h8000_0000;
+          end else begin
+            // signs differ -> result is negative
+            negate_quot = rs1_data[31] ^ rs2_data[31];
+            rd_data = negate_quot ? (~divs_quotient_unsigned + 1) : divs_quotient_unsigned;
+          end
+
+        end else if (insn_divu) begin
+          if (rs2_data == 32'b0) begin
+            rd_data = 32'hFFFF_FFFF;
+          end else begin
+            //use unsigned divider
+            rd_data = divu_quotient; 
+          end
+
+        end else if (insn_rem) begin
+          if (rs2_data == 32'b0) begin
+            rd_data = rs1_data;
+          end else if (rs1_data == 32'h8000_0000 && rs2_data == 32'hFFFF_FFFF) begin
+            rd_data = 32'b0;
+          end else begin
+            // remainder sign follows dividend (rs1)
+            negate_rem = rs1_data[31];
+            rd_data = negate_rem ? (~divs_remainder_unsigned + 1) : divs_remainder_unsigned;
+          end
+
+        end else if (insn_remu) begin
+          if (rs2_data == 32'b0) begin
+            rd_data = rs1_data;
+          end else begin
+            rd_data = divu_remainder; 
+          end
+        end else begin
           illegal_insn = 1'b1;
           rf_we = 1'b0;
-        end
-      end 
+        end 
+      end
       //opcode 63
       OpBranch: begin
         
@@ -390,6 +500,59 @@ module DatapathSingleCycle (
       OpEnviron: begin
         if (insn_ecall) begin
           halt = 1'b1;
+        end else begin
+          illegal_insn = 1'b1;
+        end
+      end
+
+      //opcode 03
+      OpLoad: begin
+        if (insn_lb) begin
+
+        end else if (insn_lh) begin
+
+        end else if (insn_lw) begin
+
+        end else if (insn_lbu) begin
+
+        end else if (insn_lhu) begin
+
+        end else begin 
+          illegal_insn = 1'b1;
+        end
+      end
+
+      //opcode 23
+      OpStore: begin
+        if(insn_sb) begin
+        end else if (insn_sh) begin 
+        end else if (insn_sw) begin
+        end else begin 
+          illegal_insn = 1'b1;
+        end
+      end
+
+      //opcode 6f
+      OpJal: begin
+        if (insn_jal) begin
+
+        end else begin
+          illegal_insn = 1'b1;
+        end
+      end
+      //opcode 67
+      OpJalr: begin
+        if (insn_jalr) begin
+
+        end else begin
+          illegal_insn = 1'b1;
+        end
+      end
+
+
+      OpMiscMem: begin
+        if (insn_fence) begin
+
         end else begin
           illegal_insn = 1'b1;
         end
