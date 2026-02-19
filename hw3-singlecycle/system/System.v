@@ -47,6 +47,62 @@ module MyClockGen (
 		.LOCK(locked)
 	);
 endmodule
+module DividerUnsigned (
+	i_dividend,
+	i_divisor,
+	o_remainder,
+	o_quotient
+);
+	input wire [31:0] i_dividend;
+	input wire [31:0] i_divisor;
+	output wire [31:0] o_remainder;
+	output wire [31:0] o_quotient;
+	wire [31:0] dividend_pipe [0:32];
+	wire [31:0] remainder_pipe [0:32];
+	wire [31:0] quotient_pipe [0:32];
+	assign dividend_pipe[0] = i_dividend;
+	assign remainder_pipe[0] = 32'b00000000000000000000000000000000;
+	assign quotient_pipe[0] = 32'b00000000000000000000000000000000;
+	genvar _gv_k_1;
+	generate
+		for (_gv_k_1 = 0; _gv_k_1 < 32; _gv_k_1 = _gv_k_1 + 1) begin : gen_div
+			localparam k = _gv_k_1;
+			DividerOneIter u_iter(
+				.i_dividend(dividend_pipe[k]),
+				.i_divisor(i_divisor),
+				.i_remainder(remainder_pipe[k]),
+				.i_quotient(quotient_pipe[k]),
+				.o_dividend(dividend_pipe[k + 1]),
+				.o_remainder(remainder_pipe[k + 1]),
+				.o_quotient(quotient_pipe[k + 1])
+			);
+		end
+	endgenerate
+	assign o_remainder = remainder_pipe[32];
+	assign o_quotient = quotient_pipe[32];
+endmodule
+module DividerOneIter (
+	i_dividend,
+	i_divisor,
+	i_remainder,
+	i_quotient,
+	o_dividend,
+	o_remainder,
+	o_quotient
+);
+	input wire [31:0] i_dividend;
+	input wire [31:0] i_divisor;
+	input wire [31:0] i_remainder;
+	input wire [31:0] i_quotient;
+	output wire [31:0] o_dividend;
+	output wire [31:0] o_remainder;
+	output wire [31:0] o_quotient;
+	wire [31:0] rem_shift = (i_remainder << 1) | {31'b0000000000000000000000000000000, i_dividend[31]};
+	wire take = $unsigned(rem_shift) >= $unsigned(i_divisor);
+	assign o_quotient = (i_quotient << 1) | {31'b0000000000000000000000000000000, take};
+	assign o_remainder = (take ? rem_shift - i_divisor : rem_shift);
+	assign o_dividend = i_dividend << 1;
+endmodule
 module gp1 (
 	a,
 	b,
@@ -243,13 +299,16 @@ module RegFile (
 		rs2_data = regs[rs2];
 	end
 	always @(posedge clk)
-		if (rst) begin : sv2v_autoblock_1
-			reg signed [31:0] i;
-			for (i = 0; i < NumRegs; i = i + 1)
-				regs[i] <= 32'b00000000000000000000000000000000;
-		end
-		else if (we && (rd != 5'd0))
-			regs[rd] <= rd_data;
+		case (1'b1)
+			rst: begin : sv2v_autoblock_1
+				reg signed [31:0] i;
+				for (i = 0; i < NumRegs; i = i + 1)
+					regs[i] <= 32'b00000000000000000000000000000000;
+			end
+			we && (rd != 5'd0): regs[rd] <= rd_data;
+			default:
+				;
+		endcase
 	initial _sv2v_0 = 0;
 endmodule
 module DatapathSingleCycle (
@@ -377,8 +436,7 @@ module DatapathSingleCycle (
 		end
 		else begin
 			cycles_current <= cycles_current + 1;
-			if (!rst)
-				num_insns_current <= num_insns_current + 1;
+			num_insns_current <= num_insns_current + 1;
 		end
 	wire [31:0] rs1_data;
 	wire [31:0] rs2_data;
@@ -407,6 +465,36 @@ module DatapathSingleCycle (
 		.sum(cla_sum)
 	);
 	reg take;
+	reg negate_rem;
+	reg negate_quot;
+	reg signed [31:0] s_rs1;
+	reg signed [31:0] s_rs2;
+	reg [31:0] u_rs1;
+	reg [31:0] u_rs2;
+	reg signed [63:0] prod_ss;
+	reg signed [63:0] prod_su;
+	reg [63:0] prod_uu;
+	wire [31:0] rs1_abs;
+	wire [31:0] rs2_abs;
+	assign rs1_abs = (rs1_data[31] ? ~rs1_data + 1 : rs1_data);
+	assign rs2_abs = (rs2_data[31] ? ~rs2_data + 1 : rs2_data);
+	wire [31:0] divs_quotient_unsigned;
+	wire [31:0] divs_remainder_unsigned;
+	DividerUnsigned u_divs(
+		.i_dividend(rs1_abs),
+		.i_divisor(rs2_abs),
+		.o_remainder(divs_remainder_unsigned),
+		.o_quotient(divs_quotient_unsigned)
+	);
+	wire [31:0] divu_quotient;
+	wire [31:0] divu_remainder;
+	DividerUnsigned u_divu(
+		.i_dividend(rs1_data),
+		.i_divisor(rs2_data),
+		.o_remainder(divu_remainder),
+		.o_quotient(divu_quotient)
+	);
+	reg [31:0] addr;
 	always @(*) begin
 		if (_sv2v_0)
 			;
@@ -425,107 +513,254 @@ module DatapathSingleCycle (
 		trace_completed_pc = pcCurrent;
 		trace_completed_insn = insn_from_imem;
 		trace_completed_cycle_status = 32'd1;
+		s_rs1 = $signed(rs1_data);
+		s_rs2 = $signed(rs2_data);
+		u_rs1 = rs1_data;
+		u_rs2 = rs2_data;
+		prod_ss = $signed(rs1_data) * $signed(rs2_data);
+		prod_su = $signed(rs1_data) * $signed({1'b0, rs2_data});
+		prod_uu = rs1_data * rs2_data;
+		negate_quot = 1'b0;
+		negate_rem = 1'b0;
+		addr = 32'd0;
 		case (insn_opcode)
 			OpLui:
-				if (insn_lui) begin
-					rf_we = 1'b1;
-					rd_data = {insn_from_imem[31:12], 12'b000000000000};
-				end
-				else begin
-					illegal_insn = 1'b1;
-					rf_we = 1'b0;
-				end
+				case (1'b1)
+					insn_lui: begin
+						rf_we = 1'b1;
+						rd_data = {insn_from_imem[31:12], 12'b000000000000};
+					end
+					default: illegal_insn = 1'b1;
+				endcase
+			OpAuipc:
+				case (1'b1)
+					insn_auipc: begin
+						rf_we = 1'b1;
+						rd_data = pcCurrent + {insn_from_imem[31:12], 12'b000000000000};
+					end
+					default: illegal_insn = 1'b1;
+				endcase
 			OpRegImm: begin
 				rf_we = 1'b1;
-				if (insn_addi) begin
-					cla_a = rs1_data;
-					cla_b = imm_i_sext;
-					cla_cin = 1'b0;
-					rf_we = 1'b1;
-					rd_data = cla_sum;
-				end
-				else if (insn_slti)
-					rd_data = ($signed(rs1_data) < $signed(imm_i_sext) ? 32'b00000000000000000000000000000001 : 32'b00000000000000000000000000000000);
-				else if (insn_sltiu)
-					rd_data = (rs1_data < imm_i_sext ? 32'b00000000000000000000000000000001 : 32'b00000000000000000000000000000000);
-				else if (insn_xori)
-					rd_data = rs1_data ^ imm_i_sext;
-				else if (insn_ori)
-					rd_data = rs1_data | imm_i_sext;
-				else if (insn_andi)
-					rd_data = rs1_data & imm_i_sext;
-				else if (insn_slli)
-					rd_data = rs1_data << imm_shamt;
-				else if (insn_srli)
-					rd_data = rs1_data >> imm_shamt;
-				else if (insn_srai)
-					rd_data = $signed(rs1_data) >>> imm_shamt;
-				else begin
-					rf_we = 1'b0;
-					illegal_insn = 1'b1;
-				end
+				case (1'b1)
+					insn_addi: begin
+						cla_a = rs1_data;
+						cla_b = imm_i_sext;
+						cla_cin = 1'b0;
+						rd_data = cla_sum;
+					end
+					insn_slti: rd_data = ($signed(rs1_data) < $signed(imm_i_sext) ? 32'b00000000000000000000000000000001 : 32'b00000000000000000000000000000000);
+					insn_sltiu: rd_data = (rs1_data < imm_i_sext ? 32'b00000000000000000000000000000001 : 32'b00000000000000000000000000000000);
+					insn_xori: rd_data = rs1_data ^ imm_i_sext;
+					insn_ori: rd_data = rs1_data | imm_i_sext;
+					insn_andi: rd_data = rs1_data & imm_i_sext;
+					insn_slli: rd_data = rs1_data << imm_shamt;
+					insn_srli: rd_data = rs1_data >> imm_shamt;
+					insn_srai: rd_data = $signed(rs1_data) >>> imm_shamt;
+					default: begin
+						rf_we = 1'b0;
+						illegal_insn = 1'b1;
+					end
+				endcase
 			end
 			OpRegReg: begin
 				rf_we = 1'b1;
-				if (insn_add) begin
-					cla_a = rs1_data;
-					cla_b = rs2_data;
-					cla_cin = 1'b0;
-					rd_data = cla_sum;
-				end
-				else if (insn_sub) begin
-					cla_a = rs1_data;
-					cla_b = ~rs2_data;
-					cla_cin = 1'b1;
-					rd_data = cla_sum;
-				end
-				else if (insn_sll)
-					rd_data = rs1_data << rs2_data[4:0];
-				else if (insn_slt)
-					rd_data = ($signed(rs1_data) < $signed(rs2_data) ? 32'b00000000000000000000000000000001 : 32'b00000000000000000000000000000000);
-				else if (insn_sltu)
-					rd_data = (rs1_data < rs2_data ? 32'b00000000000000000000000000000001 : 32'b00000000000000000000000000000000);
-				else if (insn_xor)
-					rd_data = rs1_data ^ rs2_data;
-				else if (insn_srl)
-					rd_data = rs1_data >> rs2_data[4:0];
-				else if (insn_sra)
-					rd_data = $signed(rs1_data) >>> rs2_data[4:0];
-				else if (insn_or)
-					rd_data = rs1_data | rs2_data;
-				else if (insn_and)
-					rd_data = rs1_data & rs2_data;
-				else begin
-					illegal_insn = 1'b1;
-					rf_we = 1'b0;
-				end
+				case (1'b1)
+					insn_add: begin
+						cla_a = rs1_data;
+						cla_b = rs2_data;
+						cla_cin = 1'b0;
+						rd_data = cla_sum;
+					end
+					insn_sub: begin
+						cla_a = rs1_data;
+						cla_b = ~rs2_data;
+						cla_cin = 1'b1;
+						rd_data = cla_sum;
+					end
+					insn_sll: rd_data = rs1_data << rs2_data[4:0];
+					insn_slt: rd_data = ($signed(rs1_data) < $signed(rs2_data) ? 32'b00000000000000000000000000000001 : 32'b00000000000000000000000000000000);
+					insn_sltu: rd_data = (rs1_data < rs2_data ? 32'b00000000000000000000000000000001 : 32'b00000000000000000000000000000000);
+					insn_xor: rd_data = rs1_data ^ rs2_data;
+					insn_srl: rd_data = rs1_data >> rs2_data[4:0];
+					insn_sra: rd_data = $signed(rs1_data) >>> rs2_data[4:0];
+					insn_or: rd_data = rs1_data | rs2_data;
+					insn_and: rd_data = rs1_data & rs2_data;
+					insn_mul: rd_data = u_rs1 * u_rs2;
+					insn_mulh: rd_data = prod_ss[63:32];
+					insn_mulhsu: rd_data = prod_su[63:32];
+					insn_mulhu: rd_data = prod_uu[63:32];
+					insn_div:
+						case (1'b1)
+							rs2_data == 32'b00000000000000000000000000000000: rd_data = 32'hffffffff;
+							(rs1_data == 32'h80000000) && (rs2_data == 32'hffffffff): rd_data = 32'h80000000;
+							default: begin
+								negate_quot = rs1_data[31] ^ rs2_data[31];
+								rd_data = (negate_quot ? ~divs_quotient_unsigned + 1 : divs_quotient_unsigned);
+							end
+						endcase
+					insn_divu:
+						case (rs2_data == 32'b00000000000000000000000000000000)
+							1'b1: rd_data = 32'hffffffff;
+							default: rd_data = divu_quotient;
+						endcase
+					insn_rem:
+						case (1'b1)
+							rs2_data == 32'b00000000000000000000000000000000: rd_data = rs1_data;
+							(rs1_data == 32'h80000000) && (rs2_data == 32'hffffffff): rd_data = 32'b00000000000000000000000000000000;
+							default: begin
+								negate_rem = rs1_data[31];
+								rd_data = (negate_rem ? ~divs_remainder_unsigned + 1 : divs_remainder_unsigned);
+							end
+						endcase
+					insn_remu:
+						case (rs2_data == 32'b00000000000000000000000000000000)
+							1'b1: rd_data = rs1_data;
+							default: rd_data = divu_remainder;
+						endcase
+					default: begin
+						illegal_insn = 1'b1;
+						rf_we = 1'b0;
+					end
+				endcase
 			end
 			OpBranch: begin
 				rf_we = 1'b0;
 				store_we_to_dmem = 4'b0000;
 				take = 1'b0;
-				if (insn_beq)
-					take = rs1_data == rs2_data;
-				else if (insn_bne)
-					take = rs1_data != rs2_data;
-				else if (insn_blt)
-					take = $signed(rs1_data) < $signed(rs2_data);
-				else if (insn_bge)
-					take = $signed(rs1_data) >= $signed(rs2_data);
-				else if (insn_bltu)
-					take = rs1_data < rs2_data;
-				else if (insn_bgeu)
-					take = rs1_data >= rs2_data;
-				else
-					illegal_insn = 1'b1;
+				case (1'b1)
+					insn_beq: take = rs1_data == rs2_data;
+					insn_bne: take = rs1_data != rs2_data;
+					insn_blt: take = $signed(rs1_data) < $signed(rs2_data);
+					insn_bge: take = $signed(rs1_data) >= $signed(rs2_data);
+					insn_bltu: take = rs1_data < rs2_data;
+					insn_bgeu: take = rs1_data >= rs2_data;
+					default: illegal_insn = 1'b1;
+				endcase
 				if (!illegal_insn && take)
 					pcNext = pcCurrent + imm_b_sext;
 			end
 			OpEnviron:
-				if (insn_ecall)
-					halt = 1'b1;
-				else
-					illegal_insn = 1'b1;
+				case (1'b1)
+					insn_ecall: halt = 1'b1;
+					default: illegal_insn = 1'b1;
+				endcase
+			OpLoad: begin
+				rf_we = 1'b1;
+				addr = rs1_data + imm_i_sext;
+				addr_to_dmem = {addr[31:2], 2'b00};
+				case (1'b1)
+					insn_lb:
+						(* full_case, parallel_case *)
+						case (addr[1:0])
+							2'b00: rd_data = {{24 {load_data_from_dmem[7]}}, load_data_from_dmem[7:0]};
+							2'b01: rd_data = {{24 {load_data_from_dmem[15]}}, load_data_from_dmem[15:8]};
+							2'b10: rd_data = {{24 {load_data_from_dmem[23]}}, load_data_from_dmem[23:16]};
+							2'b11: rd_data = {{24 {load_data_from_dmem[31]}}, load_data_from_dmem[31:24]};
+						endcase
+					insn_lh:
+						(* full_case, parallel_case *)
+						case (addr[1])
+							1'b0: rd_data = {{16 {load_data_from_dmem[15]}}, load_data_from_dmem[15:0]};
+							1'b1: rd_data = {{16 {load_data_from_dmem[31]}}, load_data_from_dmem[31:16]};
+						endcase
+					insn_lw: rd_data = load_data_from_dmem;
+					insn_lbu:
+						(* full_case, parallel_case *)
+						case (addr[1:0])
+							2'b00: rd_data = {24'b000000000000000000000000, load_data_from_dmem[7:0]};
+							2'b01: rd_data = {24'b000000000000000000000000, load_data_from_dmem[15:8]};
+							2'b10: rd_data = {24'b000000000000000000000000, load_data_from_dmem[23:16]};
+							2'b11: rd_data = {24'b000000000000000000000000, load_data_from_dmem[31:24]};
+						endcase
+					insn_lhu:
+						(* full_case, parallel_case *)
+						case (addr[1])
+							1'b0: rd_data = {16'b0000000000000000, load_data_from_dmem[15:0]};
+							1'b1: rd_data = {16'b0000000000000000, load_data_from_dmem[31:16]};
+						endcase
+					default: begin
+						rf_we = 1'b0;
+						illegal_insn = 1'b1;
+					end
+				endcase
+			end
+			OpStore: begin
+				rf_we = 1'b0;
+				addr = rs1_data + imm_s_sext;
+				addr_to_dmem = {addr[31:2], 2'b00};
+				store_data_to_dmem = 32'b00000000000000000000000000000000;
+				store_we_to_dmem = 4'b0000;
+				case (1'b1)
+					insn_sb:
+						(* full_case, parallel_case *)
+						case (addr[1:0])
+							2'b00: begin
+								store_data_to_dmem = {24'b000000000000000000000000, rs2_data[7:0]};
+								store_we_to_dmem = 4'b0001;
+							end
+							2'b01: begin
+								store_data_to_dmem = {16'b0000000000000000, rs2_data[7:0], 8'b00000000};
+								store_we_to_dmem = 4'b0010;
+							end
+							2'b10: begin
+								store_data_to_dmem = {8'b00000000, rs2_data[7:0], 16'b0000000000000000};
+								store_we_to_dmem = 4'b0100;
+							end
+							2'b11: begin
+								store_data_to_dmem = {rs2_data[7:0], 24'b000000000000000000000000};
+								store_we_to_dmem = 4'b1000;
+							end
+						endcase
+					insn_sh:
+						(* full_case, parallel_case *)
+						case (addr[1])
+							1'b0: begin
+								store_data_to_dmem = {16'b0000000000000000, rs2_data[15:0]};
+								store_we_to_dmem = 4'b0011;
+							end
+							1'b1: begin
+								store_data_to_dmem = {rs2_data[15:0], 16'b0000000000000000};
+								store_we_to_dmem = 4'b1100;
+							end
+						endcase
+					insn_sw: begin
+						store_data_to_dmem = rs2_data;
+						store_we_to_dmem = 4'b1111;
+					end
+					default: illegal_insn = 1'b1;
+				endcase
+			end
+			OpJal:
+				case (1'b1)
+					insn_jal: begin
+						rf_we = 1'b1;
+						rd_data = pcCurrent + 32'd4;
+						pcNext = pcCurrent + imm_j_sext;
+					end
+					default: begin
+						rf_we = 1'b0;
+						illegal_insn = 1'b1;
+					end
+				endcase
+			OpJalr:
+				case (1'b1)
+					insn_jalr: begin
+						rf_we = 1'b1;
+						rd_data = pcCurrent + 32'd4;
+						pcNext = (rs1_data + imm_i_sext) & ~32'd1;
+					end
+					default: begin
+						rf_we = 1'b0;
+						illegal_insn = 1'b1;
+					end
+				endcase
+			OpMiscMem:
+				case (1'b1)
+					insn_fence:
+						;
+					default: illegal_insn = 1'b1;
+				endcase
 			default: illegal_insn = 1'b1;
 		endcase
 	end
