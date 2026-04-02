@@ -19,8 +19,8 @@ module SystemResourceCheck (
 
   wire [31:0] pc_to_imem, insn_from_imem, mem_data_addr, mem_data_loaded_value, mem_data_to_write;
   wire [3:0] mem_data_we;
-  wire [31:0] trace_writeback_pc, trace_writeback_insn;
-  cycle_status_e trace_writeback_cycle_status;
+  wire [31:0] trace_completed_pc, trace_completed_insn;
+  cycle_status_e trace_completed_cycle_status;
 
   MemorySingleCycle #(
       .NUM_WORDS(128)
@@ -47,9 +47,9 @@ module SystemResourceCheck (
       .store_we_to_dmem(mem_data_we),
       .load_data_from_dmem(mem_data_loaded_value),
       .halt(led[0]),
-      .trace_writeback_pc(trace_writeback_pc),
-      .trace_writeback_insn(trace_writeback_insn),
-      .trace_writeback_cycle_status(trace_writeback_cycle_status)
+      .trace_completed_pc(trace_completed_pc),
+      .trace_completed_insn(trace_completed_insn),
+      .trace_completed_cycle_status(trace_completed_cycle_status)
   );
 
 endmodule
@@ -195,8 +195,8 @@ module SystemDemo(
 
   wire [31:0] pc_to_imem, insn_from_imem, mem_data_addr, mem_data_loaded_value, mem_data_to_write;
   wire [3:0] mem_data_we;
-  wire [31:0] trace_writeback_pc, trace_writeback_insn;
-  cycle_status_e trace_writeback_cycle_status;
+  wire [31:0] trace_completed_pc, trace_completed_insn;
+  cycle_status_e trace_completed_cycle_status;
 
   assign data2uart_cpu = mem_data_to_write[7:0];
 
@@ -225,9 +225,9 @@ module SystemDemo(
       .store_we_to_dmem(mem_data_we),
       .load_data_from_dmem(mem_data_addr == MmapInput ? {24'd0, data2cpu_cpu} : mem_data_loaded_value),
       .halt(),
-      .trace_writeback_pc(trace_writeback_pc),
-      .trace_writeback_insn(trace_writeback_insn),
-      .trace_writeback_cycle_status(trace_writeback_cycle_status)
+      .trace_completed_pc(trace_completed_pc),
+      .trace_completed_insn(trace_completed_insn),
+      .trace_completed_cycle_status(trace_completed_cycle_status)
   );
 
 endmodule
