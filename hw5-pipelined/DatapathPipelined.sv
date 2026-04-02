@@ -18,6 +18,7 @@
 `endif
 `include "../hw2b-cla/CarryLookaheadAdder.sv"
 `include "../hw4-multicycle/DividerUnsignedPipelined.sv"
+`include "../hw3-singlecycle/cycle_status.sv"
 
 module Disasm #(
     byte PREFIX = "D"
@@ -75,16 +76,6 @@ module RegFile (
                     (we && rd != 0 && rd == rs2) ? rd_data :
                     regs[rs2];
 endmodule
-
-typedef enum {
-  CYCLE_INVALID = 0,
-  CYCLE_RESET = 1,
-  CYCLE_NO_STALL = 2,
-  CYCLE_TAKEN_BRANCH = 4,
-  CYCLE_LOAD2USE = 8,
-  CYCLE_DIV2USE = 16,
-  CYCLE_FENCEI = 32
-} cycle_status_e;
 
 /** state at the start of Decode stage */
 typedef struct packed {
