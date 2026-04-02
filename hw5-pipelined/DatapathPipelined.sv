@@ -205,6 +205,8 @@ module DatapathPipelined (
     bypassable: 0
   };
 
+  localparam int DIV_DONE_IDX = (`DIVIDER_STAGES > 1) ? (`DIVIDER_STAGES - 2) : 0;
+
   logic [`REG_SIZE] cycles_current;
   always_ff @(posedge clk) begin
     if (rst) begin
@@ -247,10 +249,8 @@ module DatapathPipelined (
   div_meta_t x_div_meta;
   logic div_done_valid;
   logic [`REG_SIZE] div_done_result;
-  logic div_pipe_conflict;
 
-  assign div_done_valid = div_pipe[`DIVIDER_STAGES-1].valid;
-  assign div_pipe_conflict = div_done_valid;
+  assign div_done_valid = div_pipe[DIV_DONE_IDX].valid;
 
   always_ff @(posedge clk) begin
     if (rst) begin
@@ -262,7 +262,7 @@ module DatapathPipelined (
         f_pc_current <= x_branchTarget;
       end else if (load2use_hazard) begin
         f_pc_current <= f_pc_current;
-      end else if (div_pipe_conflict) begin
+      end else if (div2use_hazard) begin
         f_pc_current <= f_pc_current;
       end else begin
         f_pc_current <= f_pc_current + 4;
@@ -288,7 +288,7 @@ module DatapathPipelined (
       };
     end else if (load2use_hazard) begin
       decode_state <= decode_state;
-    end else if (div_pipe_conflict) begin
+    end else if (div2use_hazard) begin
       decode_state <= decode_state;
     end else begin
       decode_state <= '{
@@ -396,6 +396,18 @@ module DatapathPipelined (
     end
   end
 
+  logic div2use_hazard;
+  always_comb begin
+    div2use_hazard = 1'b0;
+    for (int i = 0; i < `DIVIDER_STAGES; i++) begin
+      if (div_pipe[i].valid && div_pipe[i].rd != 5'd0) begin
+        if ((d_insn_rs1 == div_pipe[i].rd) || (d_insn_rs2 == div_pipe[i].rd)) begin
+          div2use_hazard = 1'b1;
+        end
+      end
+    end
+  end
+
   always_ff @(posedge clk) begin
     if (rst) begin
       execute_state <= '{
@@ -421,8 +433,14 @@ module DatapathPipelined (
         rs1_data: 0,
         rs2_data: 0
       };
-    end else if (div_pipe_conflict) begin
-      execute_state <= execute_state;
+    end else if (div2use_hazard) begin
+      execute_state <= '{
+        insn: BUBBLE_INSN,
+        pc: 0,
+        cycle_status: CYCLE_DIV2USE,
+        rs1_data: 0,
+        rs2_data: 0
+      };
     end else begin
       execute_state <= '{
         insn: d_decoded_insn,
@@ -797,12 +815,12 @@ module DatapathPipelined (
   end
 
   always_comb begin
-    if (div_pipe[`DIVIDER_STAGES-1].special_case) begin
-      div_done_result = div_pipe[`DIVIDER_STAGES-1].special_result;
-    end else if (div_pipe[`DIVIDER_STAGES-1].is_rem) begin
-      div_done_result = div_pipe[`DIVIDER_STAGES-1].negate_rem ? ((~x_rem) + 1) : x_rem;
+    if (div_pipe[DIV_DONE_IDX].special_case) begin
+      div_done_result = div_pipe[DIV_DONE_IDX].special_result;
+    end else if (div_pipe[DIV_DONE_IDX].is_rem) begin
+      div_done_result = div_pipe[DIV_DONE_IDX].negate_rem ? ((~x_rem) + 1) : x_rem;
     end else begin
-      div_done_result = div_pipe[`DIVIDER_STAGES-1].negate_quot ? ((~x_quo) + 1) : x_quo;
+      div_done_result = div_pipe[DIV_DONE_IDX].negate_quot ? ((~x_quo) + 1) : x_quo;
     end
   end
 
@@ -816,9 +834,7 @@ module DatapathPipelined (
         rs2_passthrough: 0
       };
     end else begin
-      if (div_done_valid) begin
-        memory_state <= memory_state;
-      end else if (x_div_launch) begin
+      if (x_div_launch) begin
         memory_state <= '{
           insn: BUBBLE_INSN,
           pc: 0,
@@ -974,10 +990,10 @@ module DatapathPipelined (
       if (div_done_valid) begin
         writeback_state <= '{
           insn: '{
-            insn: div_pipe[`DIVIDER_STAGES-1].insn_bits,
+            insn: div_pipe[DIV_DONE_IDX].insn_bits,
             rs1: 5'd0,
             rs2: 5'd0,
-            rd: div_pipe[`DIVIDER_STAGES-1].rd,
+            rd: div_pipe[DIV_DONE_IDX].rd,
             funct3: 3'd0,
             funct7: 7'd0,
             opcode: OpcodeRegReg,
@@ -991,8 +1007,8 @@ module DatapathPipelined (
             imm_j_sext: 32'd0,
             bypassable: 1'b1
           },
-          pc: div_pipe[`DIVIDER_STAGES-1].pc,
-          cycle_status: div_pipe[`DIVIDER_STAGES-1].cycle_status,
+          pc: div_pipe[DIV_DONE_IDX].pc,
+          cycle_status: div_pipe[DIV_DONE_IDX].cycle_status,
           result: div_done_result,
           data: 32'd0
         };
