@@ -829,7 +829,7 @@ module DatapathPipelined (
         memory_state <= '{
           insn: BUBBLE_INSN,
           pc: 0,
-          cycle_status: CYCLE_NO_STALL,
+          cycle_status: CYCLE_DIV,
           result: 0,
           rs2_passthrough: 0
         };
