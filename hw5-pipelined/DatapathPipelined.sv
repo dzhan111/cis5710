@@ -19,6 +19,7 @@
 `include "../hw2b-cla/CarryLookaheadAdder.sv"
 `include "../hw4-multicycle/DividerUnsignedPipelined.sv"
 `include "../hw3-singlecycle/cycle_status.sv"
+<<<<<<< HEAD
 
 // STAGE STRUCTS FOR PIPELINE
 // DECODE
@@ -68,6 +69,8 @@ typedef struct packed {
   logic [4:0] rd;
   logic [`REG_SIZE] rd_data;
 } stage_writeback_t;
+=======
+>>>>>>> upstream/main
 
 module Disasm #(
     byte PREFIX = "D"
@@ -141,8 +144,16 @@ module DatapathPipelined (
 
     output logic halt,
 
+<<<<<<< HEAD
     output logic [`REG_SIZE] trace_completed_pc,
     output logic [`INSN_SIZE] trace_completed_insn,
+=======
+    // The PC of the insn currently in Writeback. 0 if not a valid insn.
+    output logic [`REG_SIZE] trace_completed_pc,
+    // The bits of the insn currently in Writeback. 0 if not a valid insn.
+    output logic [`INSN_SIZE] trace_completed_insn,
+    // The status of the insn (or stall) currently in Writeback. See the cycle_status.sv file for valid values.
+>>>>>>> upstream/main
     output cycle_status_e trace_completed_cycle_status
 );
 
