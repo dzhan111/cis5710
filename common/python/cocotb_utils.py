@@ -99,6 +99,17 @@ def enumStringToInt(enum_string, enum_dict):
 
 _CYCLE_STATUS_ENUM = None
 
+def _trace_compare_keys(traceElem):
+    """Golden traces may use trace_completed_* (current) or trace_writeback_* (legacy)."""
+    if 'trace_completed_pc' in traceElem:
+        return ('trace_completed_pc', 'trace_completed_insn', 'trace_completed_cycle_status')
+    if 'trace_writeback_pc' in traceElem:
+        return ('trace_writeback_pc', 'trace_writeback_insn', 'trace_writeback_cycle_status')
+    raise KeyError(
+        "trace entry missing trace_completed_* or trace_writeback_* keys; "
+        f"got keys: {list(traceElem.keys())}"
+    )
+
 def handleTrace(dut, trace, traceIdx, tracingMode):
     global _CYCLE_STATUS_ENUM
     if _CYCLE_STATUS_ENUM is None:
@@ -114,10 +125,11 @@ def handleTrace(dut, trace, traceIdx, tracingMode):
         trace.append(traceElem)
     elif tracingMode == 'compare':
         traceElem = trace[traceIdx]
+        kpc, kinsn, kstatus = _trace_compare_keys(traceElem)
         msg = f'trace validation error at cycle {traceElem["cycle"]}'
-        assertEquals(int(traceElem['trace_completed_pc'],16), dut.datapath.trace_completed_pc.value.integer, msg)
-        assertEquals(int(traceElem['trace_completed_insn'],16), dut.datapath.trace_completed_insn.value.integer, msg)
+        assertEquals(int(traceElem[kpc],16), dut.datapath.trace_completed_pc.value.integer, msg)
+        assertEquals(int(traceElem[kinsn],16), dut.datapath.trace_completed_insn.value.integer, msg)
         actual_status = intToEnumString(dut.datapath.trace_completed_cycle_status.value.integer, _CYCLE_STATUS_ENUM)
-        assertEquals(traceElem['trace_completed_cycle_status'], actual_status, msg)
+        assertEquals(traceElem[kstatus], actual_status, msg)
         pass
     return

@@ -12,7 +12,7 @@ module MyClockGen (
 	output wire clk_proc;
 	output wire locked;
 	wire clkfb;
-	(* FREQUENCY_PIN_CLKI = "25" *) (* FREQUENCY_PIN_CLKOP = "125" *) (* FREQUENCY_PIN_CLKOS = "25" *) (* FREQUENCY_PIN_CLKOS2 = "20.1613" *) (* ICP_CURRENT = "12" *) (* LPF_RESISTOR = "8" *) (* MFG_ENABLE_FILTEROPAMP = "1" *) (* MFG_GMCREF_SEL = "2" *) EHXPLLL #(
+	(* FREQUENCY_PIN_CLKI = "25" *) (* FREQUENCY_PIN_CLKOP = "125" *) (* FREQUENCY_PIN_CLKOS = "25" *) (* FREQUENCY_PIN_CLKOS2 = "10.0806" *) (* ICP_CURRENT = "12" *) (* LPF_RESISTOR = "8" *) (* MFG_ENABLE_FILTEROPAMP = "1" *) (* MFG_GMCREF_SEL = "2" *) EHXPLLL #(
 		.PLLRST_ENA("DISABLED"),
 		.INTFB_WAKE("DISABLED"),
 		.STDBY_ENABLE("DISABLED"),
@@ -31,7 +31,7 @@ module MyClockGen (
 		.CLKOS_CPHASE(2),
 		.CLKOS_FPHASE(0),
 		.CLKOS2_ENABLE("ENABLED"),
-		.CLKOS2_DIV(31),
+		.CLKOS2_DIV(62),
 		.CLKOS2_CPHASE(2),
 		.CLKOS2_FPHASE(0),
 		.FEEDBK_PATH("INT_OP"),
@@ -1049,14 +1049,14 @@ module SystemResourceCheck (
 				end
 				if (d_reads_rs1 && (d_rs1 != 0)) begin : sv2v_autoblock_2
 					reg signed [31:0] i;
-					for (i = 0; i < (d_is_div ? DVS : 7); i = i + 1)
-						if (div_pipe_valid[i] && (div_pipe_rd[i] == d_rs1))
+					for (i = 0; i < DVS; i = i + 1)
+						if ((div_pipe_valid[i] && (div_pipe_rd[i] == d_rs1)) && (d_is_div || (i < 7)))
 							div_stall_raw = 1;
 				end
 				if (d_reads_rs2 && (d_rs2 != 0)) begin : sv2v_autoblock_3
 					reg signed [31:0] i;
-					for (i = 0; i < (d_is_div ? DVS : 7); i = i + 1)
-						if (div_pipe_valid[i] && (div_pipe_rd[i] == d_rs2))
+					for (i = 0; i < DVS; i = i + 1)
+						if ((div_pipe_valid[i] && (div_pipe_rd[i] == d_rs2)) && (d_is_div || (i < 7)))
 							div_stall_raw = 1;
 				end
 				div_nondiv_stall = ((div_any_inflight && !div_pipe_valid[7]) && d_state[0]) && !d_is_div;

@@ -7,14 +7,14 @@ module MyClockGen
     input input_clk_25MHz, // 25 MHz, 0 deg
     output clk_125MHz, // 125 MHz, 0 deg
     output clk_25MHz, // 25 MHz, 0 deg
-    output clk_proc, // 20.1613 MHz, 0 deg
+    output clk_proc, // 10.0806 MHz, 0 deg
     output locked
 );
 wire clkfb;
 (* FREQUENCY_PIN_CLKI="25" *)
 (* FREQUENCY_PIN_CLKOP="125" *)
 (* FREQUENCY_PIN_CLKOS="25" *)
-(* FREQUENCY_PIN_CLKOS2="20.1613" *)
+(* FREQUENCY_PIN_CLKOS2="10.0806" *)
 (* ICP_CURRENT="12" *) (* LPF_RESISTOR="8" *) (* MFG_ENABLE_FILTEROPAMP="1" *) (* MFG_GMCREF_SEL="2" *)
 EHXPLLL #(
         .PLLRST_ENA("DISABLED"),
@@ -35,7 +35,7 @@ EHXPLLL #(
         .CLKOS_CPHASE(2),
         .CLKOS_FPHASE(0),
         .CLKOS2_ENABLE("ENABLED"),
-        .CLKOS2_DIV(31),
+        .CLKOS2_DIV(62),
         .CLKOS2_CPHASE(2),
         .CLKOS2_FPHASE(0),
         .FEEDBK_PATH("INT_OP"),

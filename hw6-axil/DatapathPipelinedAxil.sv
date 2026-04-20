@@ -108,8 +108,14 @@ module DatapathPipelinedAxil (
   always_comb begin
     div_stall_raw = 0; div_any_inflight = 0;
     for (int i = 0; i < DVS; i++) if (div_pipe_valid[i]) div_any_inflight = 1;
-    if (d_reads_rs1 && d_rs1 != 0) for (int i = 0; i < (d_is_div ? DVS : DVS-1); i++) if (div_pipe_valid[i] && div_pipe_rd[i] == d_rs1) div_stall_raw = 1;
-    if (d_reads_rs2 && d_rs2 != 0) for (int i = 0; i < (d_is_div ? DVS : DVS-1); i++) if (div_pipe_valid[i] && div_pipe_rd[i] == d_rs2) div_stall_raw = 1;
+    if (d_reads_rs1 && d_rs1 != 0)
+      for (int i = 0; i < DVS; i++)
+        if (div_pipe_valid[i] && div_pipe_rd[i] == d_rs1 && (d_is_div || (i < (DVS - 1))))
+          div_stall_raw = 1;
+    if (d_reads_rs2 && d_rs2 != 0)
+      for (int i = 0; i < DVS; i++)
+        if (div_pipe_valid[i] && div_pipe_rd[i] == d_rs2 && (d_is_div || (i < (DVS - 1))))
+          div_stall_raw = 1;
     div_nondiv_stall = div_any_inflight && !div_pipe_valid[DVS-1] && d_state.valid && !d_is_div;
   end
   wire x_is_div = x_state.valid && x_state.opcode == OpcodeRegReg && x_state.insn[31:25] == 7'd1 && x_state.insn[14:12][2];
